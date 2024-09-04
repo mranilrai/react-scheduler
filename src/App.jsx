@@ -1,8 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { employees as empData } from "./assets/employees";
 import { events as eventsData } from "./assets/events";
 import Employee from "./components/Employee";
-import { findMinStartAndMaxEnd, generateDateArray } from "./utils";
+import { findMinStartAndMaxEnd, generateDateArray, throttle } from "./utils";
 import moment from "moment";
 
 const { minStart, maxEnd } = findMinStartAndMaxEnd(eventsData);
@@ -14,64 +14,114 @@ function App() {
   const [resizing, setResizing] = useState(null);
   const resizingRef = useRef(null);
 
-  const handleResizeStart = useCallback(
-    (e, event, side) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const resizeInfo = {
-        event,
-        side,
-        startX: e.clientX,
-        originalLeft: event.left,
-        originalWidth: event.width,
-      };
-      setResizing(resizeInfo);
-      setResizing(resizeInfo);
-      resizingRef.current = resizeInfo;
-      document.addEventListener("mousemove", handleResizeMove);
-      document.addEventListener("mouseup", handleResizeEnd);
-    },
-    [setResizing]
-  );
+  const handleResizeStart = useCallback((e, event, side) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const resizeInfo = {
+      event,
+      side,
+      startX: e.clientX,
+      originalLeft: event.left,
+      originalWidth: event.width,
+    };
+    setResizing(resizeInfo);
+    resizingRef.current = resizeInfo;
+    document.addEventListener("mousemove", throttledHandleResizeMove);
+    document.addEventListener("mouseup", handleResizeEnd);
+  }, []);
 
   const handleResizeMove = useCallback((e) => {
+    let eventChanged = false;
     if (!resizingRef.current) return;
 
     const { event, side, startX, originalLeft, originalWidth } =
       resizingRef.current;
     const diff = e.clientX - startX;
-    const newEvent = { ...events.find((event) => event.id === event.id) };
-    console.log({ diff, newEvent });
-    if (side === "right") {
-      if (diff > 0) {
-        console.log("Increse end date");
-      } else {
-        console.log("Decrease end date");
+    const newEvent = { ...event };
+
+    if (side === "right" && diff > 0) {
+      console.log("Increse end date");
+      const newEndDate = moment(event.endDate).add(
+        Math.round(diff / 112),
+        "days"
+      );
+      if (
+        newEndDate.format("YYYY-MM-DD") !==
+        moment(event.endDate).format("YYYY-MM-DD")
+      ) {
+        newEvent.endDate = newEndDate.format("YYYY-MM-DD");
+        eventChanged = true;
       }
     }
-    if (side === "left") {
-      newEvent.left = originalLeft + diff;
-      newEvent.width = originalWidth - diff;
-    } else {
-      console.log("Increase width", diff, originalWidth);
-      newEvent.width = originalWidth + diff;
+
+    if (side === "right" && diff < 0) {
+      const newEndDate = moment(event.endDate).subtract(
+        Math.round(Math.abs(diff) / 112),
+        "days"
+      );
+
+      console.log(
+        newEndDate.format("YYYY-MM-DD"),
+        moment(event.endDate).format("YYYY-MM-DD")
+      );
+
+      if (newEndDate.isBefore(moment(event.startDate))) {
+        newEvent.endDate = moment(event.startDate).format("YYYY-MM-DD");
+        eventChanged = true;
+      } else if (
+        newEndDate.format("YYYY-MM-DD") !==
+        moment(event.endDate).format("YYYY-MM-DD")
+      ) {
+        newEvent.endDate = newEndDate.format("YYYY-MM-DD");
+        eventChanged = true;
+      }
     }
 
-    updateEvent(newEvent);
+    // if (side === "left") {
+    //   newEvent.left = originalLeft + diff;
+    //   newEvent.width = originalWidth - diff;
+    // } else {
+    //   newEvent.width = originalWidth + diff;
+    // }
+
+    if (eventChanged) {
+      updateEvent(newEvent);
+    }
   }, []);
+
+  // Throttled version of handleResizeMove
+  const throttledHandleResizeMove = useCallback(
+    throttle(handleResizeMove, 300), // 60 fps
+    [handleResizeMove]
+  );
 
   const handleResizeEnd = useCallback(() => {
     setResizing(null);
     resizingRef.current = null;
-    document.removeEventListener("mousemove", handleResizeMove);
+    document.removeEventListener("mousemove", throttledHandleResizeMove);
     document.removeEventListener("mouseup", handleResizeEnd);
-  }, []);
+  }, [throttledHandleResizeMove]);
+
+  // Clean up event listeners on component unmount
+  useEffect(() => {
+    return () => {
+      document.removeEventListener("mousemove", throttledHandleResizeMove);
+      document.removeEventListener("mouseup", handleResizeEnd);
+    };
+  }, [throttledHandleResizeMove, handleResizeEnd]);
 
   const updateEvent = useCallback((updatedEvent) => {
-    console.log({ updatedEvent });
     setEvents((prevEvents) =>
       prevEvents.map((event) =>
-        event.id === updatedEvent.id ? updatedEvent : event
+        event.id === updatedEvent.id
+          ? {
+              ...event,
+              startDate: updateEvent.startDate
+                ? updateEvent.startDate
+                : event.startDate,
+              endDate: updatedEvent.endDate,
+            }
+          : event
       )
     );
   }, []);
@@ -101,46 +151,41 @@ function App() {
       const left = start.diff(minStartNew, "days");
 
       cardArray.push({
-        id: event.id,
+        ...event,
         left: left * 112,
         width: differenceInDays * 112,
-        color: event.color,
-        name: event.name,
-        startDate: start.format("DD MMM"),
-        endDate: end.format("DD MMM"),
       });
     });
 
     return cardArray;
   };
 
-  const getClientEvents = (clientId) => {
-    const cardArray = [];
-    const clientEvents = events.filter(
-      (event) => event.resourceId === clientId
-    );
-    console.log({ clientEvents });
-    clientEvents.map((event) => {
-      const start = moment.utc(event.startDate).startOf("day");
-      const end = moment.utc(event.endDate).startOf("day");
+  const getClientEvents = useCallback(
+    (clientId) => {
+      const cardArray = [];
+      const clientEvents = events.filter(
+        (event) => event.resourceId === clientId
+      );
 
-      const differenceInDays = end.diff(start, "days") + 1;
+      clientEvents.map((event) => {
+        const start = moment.utc(event.startDate).startOf("day");
+        const end = moment.utc(event.endDate).startOf("day");
 
-      const minStartNew = moment(minStart);
-      const left = start.diff(minStartNew, "days");
+        const differenceInDays = end.diff(start, "days") + 1;
 
-      cardArray.push({
-        id: event.id,
-        left: left * 112,
-        width: event.width ? event.width : differenceInDays * 112,
-        color: event.color,
-        name: event.name,
-        startDate: start.format("DD MMM"),
-        endDate: end.format("DD MMM"),
+        const minStartNew = moment(minStart);
+        const left = start.diff(minStartNew, "days");
+
+        cardArray.push({
+          ...event,
+          left: left * 112,
+          width: differenceInDays * 112,
+        });
       });
-    });
-    return cardArray;
-  };
+      return cardArray;
+    },
+    [events]
+  );
 
   return (
     <div className="flex">
@@ -245,7 +290,9 @@ function App() {
                                   handleResizeStart(e, event, "right")
                                 }
                               />
-                              {event.name} {event.startDate}-{event.endDate}
+                              {event.id} {event.name}{" "}
+                              {moment(event.startDate).format("DD MMM")}-
+                              {moment(event.endDate).format("DD MMM")}
                             </div>
                           ))}
                         </div>
