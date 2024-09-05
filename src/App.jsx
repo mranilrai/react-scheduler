@@ -60,11 +60,6 @@ function App() {
         "days"
       );
 
-      console.log(
-        newEndDate.format("YYYY-MM-DD"),
-        moment(event.endDate).format("YYYY-MM-DD")
-      );
-
       if (newEndDate.isBefore(moment(event.startDate))) {
         newEvent.endDate = moment(event.startDate).format("YYYY-MM-DD");
         eventChanged = true;
@@ -77,15 +72,44 @@ function App() {
       }
     }
 
-    // if (side === "left") {
-    //   newEvent.left = originalLeft + diff;
-    //   newEvent.width = originalWidth - diff;
-    // } else {
-    //   newEvent.width = originalWidth + diff;
-    // }
+    if (side === "left" && diff > 0) {
+      const newStartDate = moment(event.startDate).add(
+        Math.round(diff / 112),
+        "days"
+      );
+
+      if (newStartDate.isAfter(moment(event.endDate))) {
+        newEvent.startDate = moment(event.endDate).format("YYYY-MM-DD");
+        eventChanged = true;
+      } else if (
+        newStartDate.format("YYYY-MM-DD") !==
+        moment(event.startDate).format("YYYY-MM-DD")
+      ) {
+        newEvent.startDate = newStartDate.format("YYYY-MM-DD");
+        eventChanged = true;
+      }
+    }
+
+    if (side === "left" && diff < 0) {
+      const newStartDate = moment(event.startDate).subtract(
+        Math.round(Math.abs(diff) / 112),
+        "days"
+      );
+      if (newStartDate.isBefore(moment(minStart))) {
+        newEvent.startDate = moment(minStart).format("YYYY-MM-DD");
+        eventChanged = true;
+      } else if (
+        newStartDate.format("YYYY-MM-DD") !==
+        moment(event.startDate).format("YYYY-MM-DD")
+      ) {
+        newEvent.startDate = newStartDate.format("YYYY-MM-DD");
+        eventChanged = true;
+      }
+    }
 
     if (eventChanged) {
       updateEvent(newEvent);
+      eventChanged = false;
     }
   }, []);
 
@@ -116,10 +140,12 @@ function App() {
         event.id === updatedEvent.id
           ? {
               ...event,
-              startDate: updateEvent.startDate
-                ? updateEvent.startDate
+              startDate: updatedEvent.startDate
+                ? updatedEvent.startDate
                 : event.startDate,
-              endDate: updatedEvent.endDate,
+              endDate: updatedEvent.endDate
+                ? updatedEvent.endDate
+                : event.endDate,
             }
           : event
       )
